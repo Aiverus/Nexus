@@ -2,9 +2,10 @@ const fs = require('fs')
 
 const code = `require('dotenv').config()
 const express = require('express')
-const fs2 = require('fs')
 const path = require('path')
 const cloudinary = require('cloudinary').v2
+const { Pool } = require('pg')
+
 const app = express()
 
 cloudinary.config({
@@ -13,23 +14,14 @@ cloudinary.config({
   api_secret: process.env.CLOUDINARY_API_SECRET
 })
 
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: { rejectUnauthorized: false }
+})
+
 app.use(express.static(__dirname))
 app.use('/media', express.static(path.join(__dirname, 'media')))
-app.use(express.json({ limit: '50mb' }))
-
-function readPins() {
-  const dbPath = path.join(__dirname, 'data.json')
-  if (!fs2.existsSync(dbPath)) {
-    fs2.writeFileSync(dbPath, '[]', 'utf8')
-  }
-  const raw = fs2.readFileSync(dbPath, 'utf8').replace(/^\uFEFF/, '')
-  return JSON.parse(raw)
-}
-
-function writePins(pins) {
-  const dbPath = path.join(__dirname, 'data.json')
-  fs2.writeFileSync(dbPath, JSON.stringify(pins, null, 2), 'utf8')
-}
+app.use(express.json({ limit: '100mb' }))
 
 app.post('/upload', async (req, res) => {
   try {
@@ -57,11 +49,13 @@ app.post('/upload', async (req, res) => {
   }
 })
 
-app.post('/save-pin', (req, res) => {
+app.post('/save-pin', async (req, res) => {
   try {
-    const pins = readPins()
-    pins.push(req.body)
-    writePins(pins)
+    const { lat, lng, title, description, media } = req.body
+    await pool.query(
+      'INSERT INTO pins (lat, lng, title, description, media) VALUES ($1, $2, $3, $4, $5)',
+      [lat, lng, title, description, JSON.stringify(media || [])]
+    )
     res.json({ success: true })
   } catch (err) {
     console.error('Save pin error:', err)
@@ -69,22 +63,20 @@ app.post('/save-pin', (req, res) => {
   }
 })
 
-app.get('/pins', (req, res) => {
+app.get('/pins', async (req, res) => {
   try {
-    const pins = readPins()
-    res.json(pins)
+    const result = await pool.query('SELECT * FROM pins ORDER BY created_at ASC')
+    res.json(result.rows)
   } catch (err) {
     console.error('Load pins error:', err)
     res.status(500).json({ success: false, error: err.message })
   }
 })
 
-app.post('/delete-pin', (req, res) => {
+app.post('/delete-pin', async (req, res) => {
   try {
     const { lat, lng } = req.body
-    let pins = readPins()
-    pins = pins.filter(p => p.lat !== lat || p.lng !== lng)
-    writePins(pins)
+    await pool.query('DELETE FROM pins WHERE lat = $1 AND lng = $2', [lat, lng])
     res.json({ success: true })
   } catch (err) {
     console.error('Delete pin error:', err)

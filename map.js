@@ -202,7 +202,10 @@ function showDetail(pin, index) {
   document.getElementById('detail-section').style.display = 'block'
 
   document.getElementById('detail-title').textContent = pin.title || 'Untitled'
-  document.getElementById('detail-description').textContent = pin.description
+  document.getElementById('detail-description').innerHTML = pin.description
+    .split('\n')
+    .map(line => line.trim() === '' ? '<br>' : `<p>${line}</p>`)
+    .join('')
   document.getElementById('detail-coords').textContent = `${pin.lat}, ${pin.lng}`
 
   // Media stack
@@ -358,17 +361,34 @@ document.getElementById('save-btn').addEventListener('click', async () => {
   for (let i = 0; i < selectedFiles.length; i++) {
     const file = selectedFiles[i]
     const caption = captionInputs[i] ? captionInputs[i].value.trim() : ''
-    const base64 = await toBase64(file)
-    const filename = Date.now() + '_' + file.name
 
-    const uploadRes = await fetch('/upload', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ data: base64, filename })
-    })
+    btn.textContent = `Uploading ${i + 1} of ${selectedFiles.length}...`
+
+    const ext = file.name.split('.').pop().toLowerCase()
+    let resourceType = 'image'
+    if (['mp4', 'webm', 'mov'].includes(ext)) resourceType = 'video'
+    if (['mp3', 'wav', 'ogg'].includes(ext)) resourceType = 'raw'
+
+    const formData = new FormData()
+    formData.append('file', file)
+    formData.append('upload_preset', 'geo_gallery')
+    formData.append('public_id', Date.now() + '_' + file.name.replace(/\.[^.]+$/, ''))
+
+    const uploadRes = await fetch(
+      `https://api.cloudinary.com/v1_1/dr3bqqqj3/${resourceType}/upload`,
+      { method: 'POST', body: formData }
+    )
 
     const uploadData = await uploadRes.json()
-    const url = uploadData.url || '/media/' + filename
+    const url = uploadData.secure_url
+
+    if (!url) {
+      alert(`Failed to upload ${file.name}. Check console for details.`)
+      console.error('Cloudinary error:', uploadData)
+      btn.disabled = false
+      btn.textContent = 'Save pin'
+      return
+    }
 
     mediaItems.push({ url, caption })
   }
