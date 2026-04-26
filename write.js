@@ -17,6 +17,20 @@ app.use(express.static(__dirname))
 app.use('/media', express.static(path.join(__dirname, 'media')))
 app.use(express.json({ limit: '50mb' }))
 
+function readPins() {
+  const dbPath = path.join(__dirname, 'data.json')
+  if (!fs2.existsSync(dbPath)) {
+    fs2.writeFileSync(dbPath, '[]', 'utf8')
+  }
+  const raw = fs2.readFileSync(dbPath, 'utf8').replace(/^\uFEFF/, '')
+  return JSON.parse(raw)
+}
+
+function writePins(pins) {
+  const dbPath = path.join(__dirname, 'data.json')
+  fs2.writeFileSync(dbPath, JSON.stringify(pins, null, 2), 'utf8')
+}
+
 app.post('/upload', async (req, res) => {
   try {
     const base64 = req.body.data
@@ -45,10 +59,9 @@ app.post('/upload', async (req, res) => {
 
 app.post('/save-pin', (req, res) => {
   try {
-    const raw = fs2.readFileSync('data.json', 'utf8').replace(/^\uFEFF/, '')
-    const pins = JSON.parse(raw)
+    const pins = readPins()
     pins.push(req.body)
-    fs2.writeFileSync('data.json', JSON.stringify(pins, null, 2), 'utf8')
+    writePins(pins)
     res.json({ success: true })
   } catch (err) {
     console.error('Save pin error:', err)
@@ -58,8 +71,7 @@ app.post('/save-pin', (req, res) => {
 
 app.get('/pins', (req, res) => {
   try {
-    const raw = fs2.readFileSync('data.json', 'utf8').replace(/^\uFEFF/, '')
-    const pins = JSON.parse(raw)
+    const pins = readPins()
     res.json(pins)
   } catch (err) {
     console.error('Load pins error:', err)
@@ -70,10 +82,9 @@ app.get('/pins', (req, res) => {
 app.post('/delete-pin', (req, res) => {
   try {
     const { lat, lng } = req.body
-    const raw = fs2.readFileSync('data.json', 'utf8').replace(/^\uFEFF/, '')
-    let pins = JSON.parse(raw)
+    let pins = readPins()
     pins = pins.filter(p => p.lat !== lat || p.lng !== lng)
-    fs2.writeFileSync('data.json', JSON.stringify(pins, null, 2), 'utf8')
+    writePins(pins)
     res.json({ success: true })
   } catch (err) {
     console.error('Delete pin error:', err)
