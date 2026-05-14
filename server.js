@@ -17,37 +17,36 @@ const pool = new Pool({
   ssl: { rejectUnauthorized: false }
 })
 
+const MAP_ID = process.env.MAP_ID || 'nexus-v1'
+
 app.use(express.static(__dirname))
 app.use('/media', express.static(path.join(__dirname, 'media')))
 app.use(express.json({ limit: '100mb' }))
 
-// ── DB migration (runs on every boot, safe to re-run) ─────────────────────────
 async function migrateDB() {
-  // Add tags column to pins if it doesn't exist yet
   await pool.query(`ALTER TABLE pins ADD COLUMN IF NOT EXISTS tags TEXT[] DEFAULT '{}'`)
-
-  // Create concept_nodes table for the zettelkasten concept map
+  await pool.query(`ALTER TABLE pins ADD COLUMN IF NOT EXISTS map_id TEXT DEFAULT 'nexus-v1'`)
   await pool.query(`
     CREATE TABLE IF NOT EXISTS concept_nodes (
-      id    TEXT PRIMARY KEY,
-      label TEXT NOT NULL,
-      body  TEXT DEFAULT '',
-      x     DOUBLE PRECISION,
-      y     DOUBLE PRECISION
+      id     TEXT,
+      label  TEXT NOT NULL,
+      body   TEXT DEFAULT '',
+      x      DOUBLE PRECISION,
+      y      DOUBLE PRECISION,
+      map_id TEXT DEFAULT 'nexus-v1',
+      PRIMARY KEY (id, map_id)
     )
   `)
-
+  await pool.query(`ALTER TABLE concept_nodes ADD COLUMN IF NOT EXISTS map_id TEXT DEFAULT 'nexus-v1'`)
   console.log('DB migration complete')
 }
 
 migrateDB().catch(err => console.error('Migration error:', err))
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
 function slugify(str) {
   return str.toLowerCase().trim().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '')
 }
 
-// ── Upload ────────────────────────────────────────────────────────────────────
 app.post('/upload', async (req, res) => {
   try {
     const base64 = req.body.data
@@ -74,23 +73,21 @@ app.post('/upload', async (req, res) => {
   }
 })
 
-// ── Save pin ──────────────────────────────────────────────────────────────────
 app.post('/save-pin', async (req, res) => {
   try {
     const { lat, lng, title, description, media, tags } = req.body
     const tagArray = Array.isArray(tags) ? tags : []
 
     await pool.query(
-      'INSERT INTO pins (lat, lng, title, description, media, tags) VALUES ($1, $2, $3, $4, $5, $6)',
-      [lat, lng, title, description, JSON.stringify(media || []), tagArray]
+      'INSERT INTO pins (lat, lng, title, description, media, tags, map_id) VALUES ($1, $2, $3, $4, $5, $6, $7)',
+      [lat, lng, title, description, JSON.stringify(media || []), tagArray, MAP_ID]
     )
 
-    // Ensure a concept node exists for every tag
     for (const tag of tagArray) {
       const id = slugify(tag)
       await pool.query(
-        `INSERT INTO concept_nodes (id, label, body) VALUES ($1, $2, '') ON CONFLICT (id) DO NOTHING`,
-        [id, tag]
+        `INSERT INTO concept_nodes (id, label, body, map_id) VALUES ($1, $2, '', $3) ON CONFLICT (id, map_id) DO NOTHING`,
+        [id, tag, MAP_ID]
       )
     }
 
@@ -101,7 +98,6 @@ app.post('/save-pin', async (req, res) => {
   }
 })
 
-// ── Get pins ──────────────────────────────────────────────────────────────────
 app.get('/pins', async (req, res) => {
   try {
     const result = await pool.query('SELECT * FROM pins WHERE map_id = $1 ORDER BY created_at ASC', [MAP_ID])
@@ -112,11 +108,10 @@ app.get('/pins', async (req, res) => {
   }
 })
 
-// ── Delete pin (fixed: uses id) ───────────────────────────────────────────────
 app.post('/delete-pin', async (req, res) => {
   try {
     const { id } = req.body
-    await pool.query('DELETE FROM pins WHERE id = $1', [id])
+    await pool.query('DELETE FROM pins WHERE id = $1 AND map_id = $2', [id, MAP_ID])
     res.json({ success: true })
   } catch (err) {
     console.error('Delete pin error:', err)
@@ -124,12 +119,11 @@ app.post('/delete-pin', async (req, res) => {
   }
 })
 
-// ── Get concept graph ─────────────────────────────────────────────────────────
 app.get('/concepts', async (req, res) => {
   try {
     const [nodesRes, pinsRes] = await Promise.all([
-      pool.query('SELECT * FROM concept_nodes ORDER BY label ASC'),
-      pool.query('SELECT id, title, lat, lng, tags FROM pins ORDER BY created_at ASC')
+      pool.query('SELECT * FROM concept_nodes WHERE map_id = $1 ORDER BY label ASC', [MAP_ID]),
+      pool.query('SELECT id, title, lat, lng, tags FROM pins WHERE map_id = $1 ORDER BY created_at ASC', [MAP_ID])
     ])
 
     const pins  = pinsRes.rows
@@ -140,7 +134,6 @@ app.get('/concepts', async (req, res) => {
         .map(p => p.id)
     }))
 
-    // Tag-to-tag co-occurrence edges
     const edges = []
     const edgeSet = new Set()
     for (const pin of pins) {
@@ -163,13 +156,12 @@ app.get('/concepts', async (req, res) => {
   }
 })
 
-// ── Update concept node (note body + drag position) ───────────────────────────
 app.post('/update-concept', async (req, res) => {
   try {
     const { id, body, x, y } = req.body
     await pool.query(
-      'UPDATE concept_nodes SET body=$1, x=$2, y=$3 WHERE id=$4',
-      [body ?? '', x ?? null, y ?? null, id]
+      'UPDATE concept_nodes SET body=$1, x=$2, y=$3 WHERE id=$4 AND map_id=$5',
+      [body ?? '', x ?? null, y ?? null, id, MAP_ID]
     )
     res.json({ success: true })
   } catch (err) {
@@ -178,7 +170,6 @@ app.post('/update-concept', async (req, res) => {
   }
 })
 
-// ── Start ─────────────────────────────────────────────────────────────────────
 app.listen(process.env.PORT || 3000, () => {
   console.log('Nexus running at http://localhost:3000')
 })
