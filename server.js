@@ -104,7 +104,7 @@ app.post('/save-pin', async (req, res) => {
 // ── Get pins ──────────────────────────────────────────────────────────────────
 app.get('/pins', async (req, res) => {
   try {
-    const result = await pool.query('SELECT * FROM pins ORDER BY created_at ASC')
+    const result = await pool.query('SELECT * FROM pins WHERE map_id = $1 ORDER BY created_at ASC', [MAP_ID])
     res.json(result.rows)
   } catch (err) {
     console.error('Load pins error:', err)
