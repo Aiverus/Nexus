@@ -17,6 +17,8 @@ const pool = new Pool({
   ssl: { rejectUnauthorized: false }
 })
 
+const MAP_ID = process.env.MAP_ID || 'nexus-v1'
+
 app.use(express.static(__dirname))
 app.use('/media', express.static(path.join(__dirname, 'media')))
 app.use(express.json({ limit: '100mb' }))
